@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cmake*)",
+      "Bash(ls*)",
+      "Bash(./build/*)",
+      "Read",
+      "Edit",
+      "Glob",
+      "Grep"
+    ]
+  }
+}

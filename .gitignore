@@ -1,0 +1,14 @@
+build/
+.cache/
+*.o
+*.a
+*.so
+compile_commands.json
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+build_log.txt
+fix_log.txt
+run_log.txt
+.claude/settings.local.json

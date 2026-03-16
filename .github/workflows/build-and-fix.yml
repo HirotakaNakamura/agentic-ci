@@ -1,0 +1,130 @@
+name: Build & Auto-Fix with Claude Code
+
+on:
+  push:
+    branches: [main, develop, "feature/**"]
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-fix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      # ---- Setup ----
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y cmake g++
+
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+
+      # ---- Initial Build Attempt ----
+      - name: Build project
+        id: initial_build
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          cmake -B build -S . 2>&1 | tee build_log.txt
+          cmake --build build 2>&1 | tee -a build_log.txt
+
+      # ---- Success: Run the application ----
+      - name: Run application (on build success)
+        if: steps.initial_build.outcome == 'success'
+        run: |
+          echo "Build succeeded. Running application..."
+          ./build/oem_app/vehicle_app test_data/driving_scenario.csv 2>&1 | tee run_log.txt
+          grep -q "Simulation complete" run_log.txt
+
+      # ---- Failure: Claude Code Auto-Fix ----
+      - name: Auto-fix build errors with Claude Code
+        if: steps.initial_build.outcome == 'failure'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          echo "Build failed. Invoking Claude Code to fix errors..."
+          BUILD_LOG=$(cat build_log.txt)
+
+          for attempt in 1 2 3; do
+            echo ""
+            echo "========================================="
+            echo "  Fix attempt ${attempt}/3"
+            echo "========================================="
+
+            claude -p \
+              --dangerously-skip-permissions \
+              --allowedTools "Bash Edit Read Glob Grep" \
+              "You are an automotive embedded C++ build engineer.
+          The CI build of this project has failed. Below is the build log.
+
+          RULES:
+          - Only modify files under oem_app/. NEVER modify BSW files under bsw/.
+          - Read BSW header files to understand the correct API signatures and types.
+          - Fix all compiler errors shown in the build log.
+          - After fixing, verify by running: cmake --build build 2>&1
+
+          BUILD LOG:
+          ${BUILD_LOG}" 2>&1 | tee fix_log_attempt_${attempt}.txt
+
+            echo "Attempting rebuild..."
+            if cmake --build build 2>&1 | tee build_log.txt; then
+              echo "Build succeeded on attempt ${attempt}!"
+              break
+            fi
+
+            if [ "$attempt" -eq 3 ]; then
+              echo "Failed after 3 fix attempts."
+              exit 1
+            fi
+
+            BUILD_LOG=$(cat build_log.txt)
+            echo "Build still failing, retrying..."
+          done
+
+      # ---- Verify fix: run the application ----
+      - name: Run application (after fix)
+        if: steps.initial_build.outcome == 'failure'
+        run: |
+          echo "Running application after fix..."
+          ./build/oem_app/vehicle_app test_data/driving_scenario.csv 2>&1 | tee run_log.txt
+          grep -q "Simulation complete" run_log.txt
+          echo "Application ran successfully!"
+
+      # ---- Commit fix ----
+      - name: Commit and push auto-fix
+        if: steps.initial_build.outcome == 'failure'
+        run: |
+          git config user.name "claude-code-bot"
+          git config user.email "claude-code-bot@users.noreply.github.com"
+          git add oem_app/
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "$(cat <<'EOF'
+          fix(oem_app): auto-fix build errors via Claude Code
+
+          Build errors were automatically analyzed and fixed by Claude Code.
+          The application was verified to build and run successfully.
+
+          Co-Authored-By: Claude Code <noreply@anthropic.com>
+          EOF
+          )"
+            git push
+          fi
+
+      # ---- Upload logs ----
+      - name: Upload CI logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-logs
+          path: |
+            build_log.txt
+            fix_log_*.txt
+            run_log.txt
