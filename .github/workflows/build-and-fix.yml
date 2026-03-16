@@ -6,6 +6,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write
 
 jobs:
   build-and-fix:
@@ -15,9 +16,15 @@ jobs:
     steps:
       # ---- Setup ----
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
+
+      - name: Configure AWS Credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: us-east-1
 
       - name: Install build tools
         run: sudo apt-get update && sudo apt-get install -y cmake g++
@@ -46,7 +53,8 @@ jobs:
       - name: Auto-fix build errors with Claude Code
         if: steps.initial_build.outcome == 'failure'
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_CODE_USE_BEDROCK: "1"
+          ANTHROPIC_MODEL: us.anthropic.claude-sonnet-4-20250514-v1:0
         run: |
           echo "Build failed. Invoking Claude Code to fix errors..."
           BUILD_LOG=$(cat build_log.txt)
