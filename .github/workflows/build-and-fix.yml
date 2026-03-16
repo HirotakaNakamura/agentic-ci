@@ -15,10 +15,18 @@ jobs:
 
     steps:
       # ---- Setup ----
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
       - name: Checkout repository
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
 
       - name: Configure AWS Credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
@@ -107,7 +115,10 @@ jobs:
       # ---- Commit fix ----
       - name: Commit and push auto-fix
         if: steps.initial_build.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
           git config user.name "claude-code-bot"
           git config user.email "claude-code-bot@users.noreply.github.com"
           git add oem_app/
